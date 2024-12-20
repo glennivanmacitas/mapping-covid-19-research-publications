@@ -1,0 +1,1737 @@
+---
+title: "R Notebook"
+output:
+  word_document: default
+  html_document:
+    df_print: paged
+---
+
+# Mapping COVID-19 Research Publications: A Bibliometric and Topic Modeling Approach
+
+*Macitas, G.I., Panoy, A., Cayot, J.G., & Javiero, F.Y.*
+
+Division of Physical Science and Mathematics, College of Arts and Sciences, UP Visayas
+
+### Description
+
+This study aims to analyze COVID-19 research articles from the Philippines, utilizing a combination of bibliometric analysis and topic modeling. The dataset, obtained from Scopus, includes various metadata fields such as authors, titles, publication year, source title, volume, issue, page information, citation count, affiliations, abstract, keywords, funding details, and document type.
+
+## Bibliometric Analysis
+
+The bibliometric analysis in this study aims to provide a comprehensive overview of the publication landscape for COVID-19 research articles in the Philippines. By analyzing metadata from research articles published between 2020 and 2024, we can identify trends, patterns, and key contributors in this rapidly evolving field.
+
+```{r}
+setwd("D:\\UPV\\THIRD YEAR\\Stat 197\\Final Project")
+load("all_variables.RData")
+```
+
+```{r}
+# Import libraries
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(scales)
+library(tidytext)
+library(wordcloud)
+library(tm)
+library(SnowballC)
+library(topicmodels)
+library(NLP)
+library(ldatuning)
+library(tm)
+library(reshape2)
+```
+
+```{r}
+# Import dataset
+data <- read.csv("ph_covid_scopus.csv")
+colnames(data)
+```
+
+```{r}
+# Check dimensions
+dim(data)
+```
+
+```{r}
+# Check the data
+glimpse(data)
+```
+
+```{r}
+# Check structure of variables
+str(data)
+```
+
+### Number of Publications Per Year
+
+```{r}
+# Sum number of publication by year
+yearly_count <- data %>%
+  group_by(Year) %>%
+  summarize(Total_Publication = n())
+
+yearly_count
+```
+
+```{r}
+# Plot the number of publications per year
+year_pub <- ggplot(yearly_count, aes(x = Year, y = Total_Publication)) +
+  geom_line(color = "darkred", linewidth = 1) + # Line plot
+  geom_point(color = "darkred") + # Points on the line plot
+  geom_text(aes(label = Total_Publication), hjust = -0.5, vjust = 0.5, size = 3) + # Add text labels
+  labs(       x = "Year",
+       y= "Total Number of Publications") +
+  theme_minimal() +
+  ylim(0,1100)
+year_pub
+```
+
+```{r}
+ggsave("year_pub.png", plot = year_pub, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+### Document-Type Distribution
+
+```{r}
+# Display the count of unique document types
+doc_type <- data %>%
+  count(Document.Type, sort = TRUE)
+
+print(doc_type)
+```
+
+```{r}
+# Calculate percentage
+doc_type$total_percent <- (doc_type$n / sum(doc_type$n)) * 100
+
+# Plot
+doc_type_pub <- ggplot(doc_type, aes(x = total_percent, y = reorder(Document.Type, total_percent), fill = "salmon")) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(" ",n, "\n(", round(total_percent, 1), "%)")), hjust = -0.1, vjust = 0.5, size = 2.5, color = "black") + # Add text labels with adjusted position
+  labs(title = "Distribution of Document Types",
+       x = "Percentage of Total Publications",
+       y = "Document Type") +
+  theme_minimal() +
+  guides(fill = "none") +
+  xlim(0,80)
+
+doc_type_pub
+```
+
+```{r}
+ggsave("doc_type_pub.png", plot = doc_type_pub, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+### Most Prolific Author
+
+```{r}
+# Count number of publications associated with authors
+author_count <- data %>%
+  separate_rows(Authors, sep = "; ") %>%
+  count(Authors, sort = TRUE)
+
+head(author_count)
+```
+
+```{r}
+# Create a plot of the top 10 authors
+top_authors <- head(author_count,10)
+
+top_authors <- ggplot(top_authors, aes(x = n, y = reorder(Authors,n), fill="salmon")) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") + # Add text labels
+  labs(title = "Top 10 Most Prolific Authors",
+       x = "Publication Count",
+       y = "Author") +
+  theme_minimal() +
+  guides(fill = FALSE)
+```
+
+```{r}
+ggsave("top_authors.png", plot = top_authors, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+```{r}
+# Create a plot of the top 10 authors
+top_authors <- head(author_count, 10)
+
+# Redact author names
+redacted_authors <- top_authors
+redacted_authors$Authors <- paste("Author", seq_len(nrow(redacted_authors)))
+
+# Plot
+prolific_author <- ggplot(redacted_authors, aes(x = n, y = reorder(Authors, n), fill = n)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") + # Add text labels
+  scale_fill_gradient(low = "salmon", high = "darkred") +
+  labs(title = "Top 10 Most Prolific Authors",
+       x = "Publication Count",
+       y = "Author") +
+  theme_minimal() +
+  guides(fill = FALSE)
+
+prolific_author
+
+prolific_author <- ggplot(redacted_authors, aes(x = n, y = reorder(Authors, n), fill = "salmon")) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") + # Add text labels
+  labs(title = "Top 10 Most Prolific Authors",
+       x = "Publication Count",
+       y = NULL) +
+  theme_minimal() +
+  guides(fill = FALSE)
+
+prolific_author
+```
+
+```{r}
+ggsave("prolific_author.png", plot = prolific_author, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+### Top Publishing Journals
+
+```{r}
+# Count publications per journal
+journal_count <- data %>%
+  count(Source.title, sort=TRUE)
+
+head(journal_count, 10)
+```
+
+```{r}
+# Plot publications data
+top_journal <- head(journal_count,10)
+
+recoded <- top_journal %>%
+  mutate(Source.title = recode(Source.title,
+                                "2022 IEEE 14th International Conference on Humanoid, Nanotechnology, Information Technology, Communication and Control, Environment, and Management, HNICEM 2022" = "2022 IEEE International Conference on HNICEM",
+                                 "2021 IEEE 13th International Conference on Humanoid, Nanotechnology, Information Technology, Communication and Control, Environment, and Management, HNICEM 2021" = "2021 IEEE International Conference on HNICEM"))
+
+
+# Create a plot of the top 10 publishing journals
+top_10_journals <- ggplot(recoded, aes(x = n, y = reorder(Source.title, n), fill = "salmon")) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") + # Add text labels
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 50)) + 
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "Top 10 Publishing Journals",
+       x = "Publication Count",
+       y = "Journals") +
+  theme_minimal() +
+  guides(fill = FALSE) +
+  xlim(0, 220)
+
+top_10_journals
+```
+
+```{r}
+ggsave("top_10_journals.png", plot = top_10_journals, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+### Citations
+
+```{r}
+# Citations per year
+cite_count <- data %>%
+  group_by(Year) %>%
+  summarize(Citations = sum(Cited.by))
+
+cite_count
+```
+
+```{r}
+# Filter the data to include only years up to 2023
+cite_count <- data %>%
+  filter(Year <= 2023) %>%  # Filter out the year 2024
+  group_by(Year) %>%
+  summarize(Citations = sum(Cited.by))
+
+# Plot citations for years up to 2023
+yearly_citations <- ggplot(cite_count, aes(x = Year, y = Citations, label = Citations)) +
+  geom_line(color = "darkred", size = 1) +
+  geom_point(color = "darkred", size = 2) +
+  geom_text(size = 3, color = "black",
+            nudge_y = 50, check_overlap = TRUE, hjust = -0.5, vjust = 0) +
+  labs(x = "Year",
+       y = "Number of Citations",
+       title = "Yearly Citations (up to 2023)") +
+  theme_minimal() +
+  ylim(0, 13100)
+
+# Display the plot
+yearly_citations
+```
+
+```{r}
+ggsave("yearly_citations.png", plot = yearly_citations, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+```{r}
+# Average Citation per Year
+avg_cite_count <- data %>%
+  group_by(Year) %>%
+  summarize("Median Citation Per Article" = median(Cited.by, na.rm = TRUE))
+
+avg_cite_count
+```
+
+```{r}
+# Most cited paper
+most_cited_papers <- data %>%
+  arrange(desc(Cited.by)) %>%
+  select(c(Title, Cited.by))
+
+head(most_cited_papers, 10)
+```
+
+```{r}
+# Most cited journal
+most_cited_journals <- data %>%
+  group_by(Source.title) %>%
+  summarize(Cited.by = n()) %>%
+  arrange(desc(Cited.by)) 
+
+head(most_cited_journals, 10)
+```
+
+### Publications by Affiliations
+
+```{r}
+# Count number of publications associated with different affiliations
+affil_count <- data %>%
+  separate_rows(Affiliations, sep = "; ") %>%
+  count(Affiliations, sort = TRUE)
+
+head(affil_count)
+```
+
+```{r}
+# Create a dataframe with the sample data
+df <- data.frame(Authors.with.affiliations = data$Authors.with.affiliations, stringsAsFactors = FALSE)
+
+# Split the Authors.with.affiliations column into multiple rows based on semicolons
+df <- df %>%
+  separate_rows(Authors.with.affiliations, sep = ";") %>%
+  mutate(Affiliation = trimws(Authors.with.affiliations))
+
+# Extract country from affiliation using regular expression
+df <- df %>%
+  mutate(Country = sub('.*\\b([A-Za-z]+)$', '\\1', Affiliation))
+head(df)
+```
+
+```{r}
+country <- data.frame(Country = df$Country, stringsAsFactors = TRUE)
+head(country, 10)
+```
+
+```{r}
+country_count <- country %>%
+  count(Country, sort = TRUE) %>%
+  filter(!grepl("\\.", Country))
+
+head(country_count,10)
+```
+
+```{r}
+
+top_country <- head(country_count, 10)
+
+country_recoded <- top_country %>%
+  mutate(Country = recode(Country, "States" = "United States", "Kingdom" = "United Kingdom"))
+
+# Plot
+country_w_most_researchers <- ggplot(country_recoded, aes(x = n, y = reorder(Country, n), fill = "salmon")) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), hjust = -0.2, size = 3, color = "black") + # Add text labels
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 50)) + 
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "Countries With Most Researchers",
+       x = "Number of Researchers",
+       y = "Country") +
+  theme_minimal() +
+  guides(fill = FALSE) +
+  xlim(0,9000)
+
+country_w_most_researchers
+```
+
+```{r}
+ggsave("country_w_most_researchers.png", plot = country_w_most_researchers, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+### Most Common Topic
+
+```{r}
+# Most common words based on the titles
+
+# Create custom stopwords
+custom_stopwords <- tribble(
+  ~word, ~lexicon,
+  "covid", "covid",
+  "19", "19",
+  "pandemic", "pandemic",
+  "analysis", "analysis",
+  "based", "based",
+  "impact","impact",
+  "philippines", "philippines",
+  "2", "2",
+  "study", "study",
+  "filipino", "filipino",
+  "philippine", "philippine",
+  "approach", "approach",
+  "cov","cov",
+  "sars", "sars",
+  "disease", "disease",
+  "factors", "factors",
+  "health","health",
+  "results", "results",
+  "data", "data",
+  "patients","patients",
+  "2020", "2020",
+  "2021","2021",
+  "2022","2022",
+  "2023","2023",
+  "2024","2024",
+  "significant","significant",
+  "research","research",
+  "findings","findings",
+  "related","related",
+  "author","author",
+  "participants","participants"
+)
+
+stop_words2 <- stop_words %>%
+  bind_rows(custom_stopwords)
+```
+
+```{r}
+# Top words in the title
+tidy_title <- data %>%
+  unnest_tokens(word, Title) %>%
+  anti_join(stop_words2) %>%
+  count(word, sort=TRUE)
+
+head(tidy_title,20)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Word cloud
+wordcloud(words = tidy_title$word, freq = tidy_title$n, min.freq = 5,
+          max.words = 100, random.order = FALSE, rot.per = 0.35,
+          colors = brewer.pal(8, "Dark2"))
+```
+
+```{r}
+# Most common word in abstracts
+
+tidy_abstract <- data %>%
+  unnest_tokens(word, Abstract) %>%
+  anti_join(stop_words2) %>%
+  count(word, sort=TRUE)
+
+head(tidy_abstract, 20)
+```
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+# Wordcloud
+wordcloud(words = tidy_abstract$word, freq = tidy_abstract$n, min.freq = 5,
+          max.words = 100, random.order = FALSE, rot.per = 0.35,
+          colors = brewer.pal(8, "Dark2"))
+```
+
+## Topic Modeling
+
+```{r}
+# Import libraries
+library(textstem)
+
+# Tidy data
+data$ID <- c(1:dim(data)[1])
+abstract_tidy <- data %>%
+  unnest_tokens(word, Abstract) %>%
+  anti_join(stop_words2)
+
+# Clean and lemmatize
+abstract_tidy$word <- removeNumbers(abstract_tidy$word)
+abstract_tidy$word <- removePunctuation(abstract_tidy$word)
+abstract_tidy$word <- lemmatize_words(abstract_tidy$word)
+```
+
+```{r}
+# Tidy data
+data$ID <- c(1:dim(data)[1])
+abstract_tidy1 <- new_data %>%
+  unnest_tokens(word, Abstract) %>%
+  anti_join(stop_words2)
+
+# Clean and lemmatize
+abstract_tidy1$word <- removeNumbers(abstract_tidy1$word)
+abstract_tidy1$word <- removePunctuation(abstract_tidy1$word)
+abstract_tidy1$word <- lemmatize_words(abstract_tidy1$word)
+```
+
+```{r}
+# Calculate the number of words per abstract
+data <- data %>%
+  mutate(Word_Count = str_count(Abstract, "\\w+"))
+
+# Summary statistics
+word_count_summary <- data %>%
+  summarize(Min_Word_Count = min(Word_Count),
+            Max_Word_Count = max(Word_Count),
+            Mean_Word_Count = mean(Word_Count))
+
+word_count_summary
+```
+
+```{r}
+new_data <- data %>%
+  mutate(Word_Count = str_count(Abstract, "\\w+")) %>% # Calculate the number of words per abstract
+  filter(Word_Count > 3) %>% # Remove abstracts with only three words
+  select(-Word_Count) # Remove the Word_Count column
+
+# Summary statistics
+# Calculate the number of words per abstract in the new dataset
+new_data <- new_data %>%
+  mutate(Word_Count = str_count(Abstract, "\\w+"))
+
+# Summary statistics
+word_count_summary <- new_data %>%
+  summarize(Min_Word_Count = min(Word_Count),
+            Max_Word_Count = max(Word_Count),
+            Mean_Word_Count = mean(Word_Count))
+
+word_count_summary
+```
+
+```{r}
+nrow(new_data)
+```
+
+```{r}
+# Create document-term matrix
+abstract_dtm <- abstract_tidy %>%
+  count(ID, word) %>%
+  cast_dtm(ID, word, n) %>%
+  as.matrix()
+dim(abstract_dtm)
+```
+
+```{r}
+# Create document-term matrix
+abstract_dtm1 <- abstract_tidy1 %>%
+  count(ID, word) %>%
+  cast_dtm(ID, word, n) %>%
+  as.matrix()
+dim(abstract_dtm1)
+```
+
+```{r}
+#n_topics = 2:50
+#start_time <- Sys.time()
+#lda_ldatuning_result <- FindTopicsNumber(
+#  abstract_dtm, topics = n_topics,
+#  metrics = c("Griffiths2004","CaoJuan2009", "Arun2010", "Deveaud2014"),
+#  method = "Gibbs", control = list(seed = 42), mc.cores = 4L, verbose = TRUE)
+#end_time <- Sys.time()
+```
+
+```{r}
+#print(end_time-start_time)
+```
+
+```{r}
+lda_ldatuning_result <- readRDS("lda_ldatuning_result.rds")
+```
+
+```{r}
+# Plot result
+png(filename = "lda.png",
+    width = 11, height = 7, units = "in", res = 1000)
+FindTopicsNumber_plot(lda_ldatuning_result)
+dev.off()
+```
+
+```{r}
+# Define the range of candidate numbers of topics
+#  n_topics <- c(2,3,4,5,6,14,17,20,25,35,45,50)
+
+# Number of folds for cross-validation
+#  k <- 5
+
+# Create folds
+#  set.seed(42)  # For reproducibility
+#  folds <- cut(seq(1, nrow(abstract_dtm)), breaks = k, labels = FALSE)
+
+# Initialize a list to store perplexity results
+#  perplexity_results <- list()
+
+#start_perp_time <- Sys.time()
+# Loop over each number of topics
+#  for (num_topics in n_topics) {
+#  fold_perplexities <- numeric(k)
+  
+# Perform k-fold cross-validation
+#  for (i in 1:k) {
+    
+   # Split data into training and validation sets
+#     validation_indices <- which(folds == i, arr.ind = TRUE)
+#     validation_set <- abstract_dtm[validation_indices, ]
+#     training_set <- abstract_dtm[-validation_indices, ]
+#     
+#    # Train LDA model on training set
+#     lda_model <- LDA(training_set, k = num_topics, method = "Gibbs", control = list(seed = 42))
+#     
+#     # Compute perplexity on validation set
+#     fold_perplexities[i] <- perplexity(lda_model, newdata = validation_set)}
+#   
+#   # Average perplexity over all folds for this number of topics
+#     avg_perplexity <- mean(fold_perplexities)
+#     perplexity_results[[as.character(num_topics)]] <- avg_perplexity
+#     cat("Number of topics:", num_topics, "Average Perplexity:", avg_perplexity, "\n")}
+#  
+# end_perp_time <- Sys.time()
+# 
+# # Convert results to a data frame
+# perplexity_df <- data.frame(
+# num_topics = n_topics,
+# avg_perplexity = unlist(perplexity_results))
+# 
+# # Print the results
+# print(perplexity_df)
+```
+
+```{r}
+# time elapsed
+# print(end_perp_time-start_perp_time)
+```
+
+It takes 2.23 hours to finish.
+
+```{r}
+perplexity_df <- readRDS("D:\\UPV\\THIRD YEAR\\Stat 197\\Final Project\\perplexity_df")
+head(perplexity_df)
+```
+
+```{r}
+# Plot perplexity
+perp <- ggplot(perplexity_df, aes(x = num_topics, y = avg_perplexity, label = round(avg_perplexity, 2))) +
+  geom_line(color = "darkred", size = 1) +
+  geom_point(color = "darkred", size = 2.5) +
+  labs(title = "Perplexity vs. Number of Topics",
+       x = "Number of Topics",
+       y = "Average Perplexity") +
+  theme_minimal() +
+  geom_text(vjust = -10, hjust = 1, size = 3, color = "black")  # Adjust hjust parameter here
+
+perp
+```
+
+```{r}
+library(ggrepel)
+perp <- ggplot(perplexity_df, aes(x = num_topics, y = avg_perplexity, label = round(avg_perplexity, 2))) +
+  geom_line(color = "darkred", size = 1) +
+  geom_point(color = "darkred", size = 2.5) +
+  labs(
+       x = "Number of Topics",
+       y = "Average Perplexity") +
+  theme_minimal() +
+  geom_text(aes(label = round(avg_perplexity, 2)),
+            size = 2.5, color = "black",
+            nudge_y = 1, check_overlap = TRUE, hjust = -0.1, vjust = -0.5) +
+  scale_x_continuous(breaks = seq(0, 70, by = 5), minor_breaks = seq(1, 70, by = 1), limits = c(0,52))
+
+perp
+```
+
+```{r}
+ggsave("perp.png", plot = perp, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+```{r}
+# Train based on 6-topic model
+#num_topics <- 6  # Replace with the optimal number of topics
+#lda_model <- LDA(abstract_dtm, k = num_topics, method = "Gibbs", control = list(seed = 42))
+summary(lda_model)
+```
+
+```{r}
+lda_model1 <- LDA(abstract_dtm1, k = 6, method = "Gibbs", control = list(seed = 42))
+```
+
+```{r}
+lda_model <- readRDS("final_lda_model.rds")
+```
+
+```{r}
+# Remove empty terms
+term_names <- colnames(abstract_dtm)
+
+# Identify empty or whitespace terms
+empty_terms <- which(term_names == "" | grepl("^\\s+$", term_names))
+
+# Remove empty or whitespace terms
+abstract_dtm <- abstract_dtm[, -empty_terms]
+
+# Train again the lda model above
+```
+
+```{r}
+abstract_topics <- tidy(lda_model, matrix = "beta")
+abstract_topics
+```
+
+```{r}
+abstract_topics1 <- tidy(lda_model1, matrix = "beta")
+abstract_topics1
+```
+
+```{r}
+abstract_topics
+```
+
+```{r}
+# View Words by Topic
+# Find beta (word-topic probability)
+word_probs <- abstract_topics %>%
+  group_by(topic) %>%
+  top_n(15, beta) %>%
+  ungroup() %>%
+  mutate(term2 = fct_reorder(term, beta))
+
+word_probs
+```
+
+```{r}
+# Plot top 15 words per topic
+# Custom color palette with shades of red
+
+# Create ggplot with custom fill colors
+bet <- ggplot(word_probs, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta") 
+bet
+
+```
+
+```{r}
+ggsave("bet.png", plot = bet, width = 10, height = 5.63, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 1
+topic_1 <- word_probs[word_probs$topic == 1, ]
+
+# Create ggplot with custom fill colors for topic 1
+bet_topic_1 <- ggplot(topic_1, aes(term2, beta, fill = "#990000")) + 
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta") 
+
+# Display the plot for topic 1
+print(bet_topic_1)
+```
+
+```{r}
+ggsave("bet_topic_1.png", plot = bet_topic_1, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 2
+topic_2 <- word_probs[word_probs$topic == 2, ]
+
+# Create ggplot with custom fill color for topic 2
+bet_topic_2 <- ggplot(topic_2, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(fill = "#B79F00", show.legend = FALSE) +  # Use the second color from the original palette
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta")
+
+# Display the plot for topic 2
+print(bet_topic_2)
+```
+
+```{r}
+ggsave("bet_topic_2.png", plot = bet_topic_2, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 3
+topic_3 <- word_probs[word_probs$topic == 3, ]
+
+# Create ggplot with custom fill color for topic 2
+bet_topic_3 <- ggplot(topic_3, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(fill = "#00BA38", show.legend = FALSE) +  # Use the second color from the original palette
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta")
+
+# Display the plot for topic 3
+print(bet_topic_3)
+ggsave("bet_topic_3.png", plot = bet_topic_3, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 4
+topic_4 <- word_probs[word_probs$topic == 4, ]
+
+# Create ggplot with custom fill color for topic 2
+bet_topic_4 <- ggplot(topic_4, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(fill = "#00BFC4", show.legend = FALSE) +  # Use the second color from the original palette
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta")
+
+# Display the plot for topic 4
+print(bet_topic_4)
+ggsave("bet_topic_4.png", plot = bet_topic_4, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 5
+topic_5 <- word_probs[word_probs$topic == 5, ]
+
+# Create ggplot with custom fill color for topic 2
+bet_topic_5 <- ggplot(topic_5, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(fill = "#619CFF", show.legend = FALSE) +  # Use the second color from the original palette
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta")
+
+# Display the plot for topic 5
+print(bet_topic_5)
+ggsave("bet_topic_5.png", plot = bet_topic_5, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Filter data for topic 5
+topic_6 <- word_probs[word_probs$topic == 6, ]
+
+# Create ggplot with custom fill color for topic 2
+bet_topic_6 <- ggplot(topic_6, aes(term2, beta, fill = as.factor(topic))) + 
+  geom_col(fill = "#F564E3", show.legend = FALSE) +  # Use the second color from the original palette
+  coord_flip() +
+  xlab("Term") +
+  ylab("Beta")
+
+# Display the plot for topic 5
+print(bet_topic_6)
+ggsave("bet_topic_6.png", plot = bet_topic_6, width = 5, height = 5, dpi = 300)
+```
+
+```{r}
+# Classify Reviews by Topic
+# Use gamma (topic-document probability)
+
+abstract_gamma <- tidy(lda_model, matrix = "gamma")
+abstract_gamma$document <- as.numeric(abstract_gamma$document)
+abstract_gamma <- as.data.frame(abstract_gamma)
+head(abstract_gamma)
+```
+
+```{r}
+# Obtain documents per topic and sort by gamma
+topic_1 <- abstract_gamma[abstract_gamma$topic == 1,]
+topic_1 <- topic_1[order(topic_1$document),]
+topic_2 <- abstract_gamma[abstract_gamma$topic == 2,]
+topic_2 <- topic_2[order(topic_2$document),]
+topic_3 <- abstract_gamma[abstract_gamma$topic == 3,]
+topic_3 <- topic_3[order(topic_3$document),]
+topic_4 <- abstract_gamma[abstract_gamma$topic == 4,]
+topic_4 <- topic_4[order(topic_4$document),]
+topic_5 <- abstract_gamma[abstract_gamma$topic == 5,]
+topic_5 <- topic_5[order(topic_5$document),]
+topic_6 <- abstract_gamma[abstract_gamma$topic == 6,]
+topic_6 <- topic_6[order(topic_6$document),]
+```
+
+```{r}
+# Classify gamma values
+gam1 <- as.numeric(topic_1$gamma > 0.2)
+gam2 <- as.numeric(topic_2$gamma > 0.2)
+gam3 <- as.numeric(topic_3$gamma > 0.2)
+gam4 <- as.numeric(topic_4$gamma > 0.2)
+gam5 <- as.numeric(topic_5$gamma > 0.2)
+gam6 <- as.numeric(topic_6$gamma > 0.2)
+```
+
+```{r}
+quantile(abstract_gamma$gamma, 0.7, 5)
+```
+
+```{r}
+# Create dataframe with gamma per document
+text_topic <- data.frame(ID = topic_1$document, topic1 = gam1, topic2 = gam2, topic3 = gam3, topic4 = gam4, topic5 = gam5, topic6 = gam6)
+text_topic
+```
+
+```{r}
+# Match results with original dataframe
+abstract_match <- merge(data, text_topic, by= "ID", all.x = TRUE)
+abstract_match
+```
+
+```{r}
+head(abstract_match)
+```
+
+```{r}
+# Initialize a dataframe to store counts
+true_topic_counts <- data.frame(
+  topic = c("Psychological and Behavioral Impact of COVID-19",
+            "Educational Adaptation and Challenges During COVID-19",
+            "Governance, Politics and Development",
+            "Models, Systems, and Innovations",
+            "Immunology, Vaccine and Drug Development",
+            "COVID-19 Comorbidities"),
+  count = c(
+    sum(abstract_match$topic1),
+    sum(abstract_match$topic2),
+    sum(abstract_match$topic3),
+    sum(abstract_match$topic4),
+    sum(abstract_match$topic5),
+    sum(abstract_match$topic6)
+  )
+)
+
+# Adding a column for the color mapping
+true_topic_counts$topic_col <- c("topic1", "topic2", "topic3", "topic4", "topic5", "topic6")
+
+# Print the result
+print(true_topic_counts)
+```
+
+```{r}
+
+# Define the topic colors
+topic_colors <- c("Psychological and Behavioral Impact of COVID-19" = "#F8766D", 
+                  "Educational Adaptation and Challenges During COVID-19" = "#B79F00", 
+                  "Governance, Politics and Development" = "#00BA38", 
+                  "Models, Systems, and Innovations" = "#00BFC4", 
+                  "Immunology, Vaccine and Drug Development" = "#619CFF", 
+                  "COVID-19 Comorbidities" = "#F564E3")
+
+# Create the plot
+topic_plot <- ggplot(true_topic_counts, aes(x = count, y = reorder(topic, count), fill = topic)) +
+  geom_bar(stat = "identity") +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 30)) + 
+  scale_x_continuous(labels = scales::comma) +
+  labs(title = "Number of Abstracts Classified Per Topic",
+       x = "Number of Abstracts",
+       y = "Topics") +
+  theme_minimal() +
+  guides(fill = FALSE) +
+  scale_fill_manual(values = topic_colors) +
+  geom_text(aes(label = count), hjust = -0.2, size = 3, color = "black") + 
+  xlim(0,900)
+
+topic_plot
+```
+
+```{r}
+true_topic_counts
+```
+
+```{r}
+ggsave("topic.png", plot = topic_plot, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+```{r}
+# Find top documents per topic
+k <- 1
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+head(top_abstract)
+```
+
+```{r}
+# Find top documents per topic
+k <- 1
+dat1 <- abstract_gamma1[abstract_gamma1$topic == k,]
+top_abstract1 <- dat1[order(dat1$gamma, decreasing = TRUE),]
+head(top_abstract1)
+```
+
+```{r}
+data[data$ID == top_abstract1[1,1], ]$Abstract
+```
+
+```{r}
+# Check second top abstract
+data[data$ID == top_abstract1[2,1], ]$Abstract
+```
+
+```{r}
+# Check third top abstract
+data[data$ID == top_abstract[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+Topic 1 is mostly about behavioral effects of COVID-19.
+
+```{r}
+# Find top documents per topic
+k <- 2
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract[1,1], ]$Abstract
+```
+
+```{r}
+# Find top documents per topic
+k <- 2
+dat1 <- abstract_gamma1[abstract_gamma1$topic == k,]
+top_abstract1 <- dat1[order(dat1$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract1[1,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract1[2,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[6,1], ]$Abstract
+```
+
+Topic 2 is more likely about education and learning during the COVID-19 pandemic.
+
+```{r}
+# Find top documents per topic
+k <- 3
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract[1,1], ]$Abstract
+```
+
+```{r}
+# Find top documents per topic
+k <- 3
+dat1 <- abstract_gamma1[abstract_gamma1$topic == k,]
+top_abstract1 <- dat1[order(dat1$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract1[1,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract1[2,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract1[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+Topic 3 is more like about policy-making.
+
+```{r}
+# Find top documents per topic
+k <- 4
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract[1,1], ]$Abstract
+```
+
+```{r}
+# Check the second top abstract for this topic
+data[data$ID == top_abstract[2,1], ]$Abstract
+```
+
+```{r}
+# Check the third top abstract for this topic
+data[data$ID == top_abstract[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[6,1], ]$Abstract
+```
+
+Topic 4 is most likely about technologies, systems and models that are helpful during COVID-19.
+
+```{r}
+# Find top documents per topic
+k <- 5
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract[1,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[2,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[6,1], ]$Abstract
+```
+
+Topic 5 revolves around vaccines, drugs and experiments.
+
+```{r}
+# Find top documents per topic
+k <- 6
+dat <- abstract_gamma[abstract_gamma$topic == k,]
+top_abstract <- dat[order(dat$gamma, decreasing = TRUE),]
+data[data$ID == top_abstract[1,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[2,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[3,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[4,1], ]$Abstract
+```
+
+```{r}
+data[data$ID == top_abstract[5,1], ]$Abstract
+```
+
+Topic 6 is most likely comorbities associated with COVID-19..
+
+```{r}
+colnames(abstract_match)
+```
+
+```{r}
+# Distribution of Topics Across Journals
+
+# Ensure the topic columns are treated as numeric
+abstract_match$topic1 <- as.numeric(abstract_match$topic1)
+abstract_match$topic2 <- as.numeric(abstract_match$topic2)
+abstract_match$topic3 <- as.numeric(abstract_match$topic3)
+abstract_match$topic4 <- as.numeric(abstract_match$topic4)
+abstract_match$topic5 <- as.numeric(abstract_match$topic5)
+abstract_match$topic6 <- as.numeric(abstract_match$topic6)
+
+topic_summary <- abstract_match %>%
+  group_by(Source.title) %>%
+  summarise(
+    topic1_count = sum(topic1),
+    topic2_count = sum(topic2),
+    topic3_count = sum(topic3),
+    topic4_count = sum(topic4),
+    topic5_count = sum(topic5),
+    topic6_count = sum(topic6)
+  )
+head(topic_summary)
+```
+
+```{r}
+# Count the number of publications per journal
+journal_counts <- abstract_match %>%
+  group_by(Source.title) %>%
+  summarise(publication_count = n()) %>%
+  arrange(desc(publication_count))
+
+# Select the top 10 journals
+top_journals <- journal_counts %>%
+  top_n(10, wt = publication_count) %>%
+  pull(Source.title)
+
+# Filter the original data frame to include only the top 10 journals
+top_journals_data <- abstract_match %>%
+  filter(Source.title %in% top_journals)
+
+# Summarize topic counts by journal for the top 10 journals
+topic_summary_top <- top_journals_data %>%
+  group_by(Source.title) %>%
+  summarise(
+    topic1_count = sum(as.numeric(topic1)),
+    topic2_count = sum(as.numeric(topic2)),
+    topic3_count = sum(as.numeric(topic3)),
+    topic4_count = sum(as.numeric(topic4)),
+    topic5_count = sum(as.numeric(topic5)),
+    topic6_count = sum(as.numeric(topic6))
+  )
+```
+
+```{r}
+# Melt the data for easier plotting
+topic_summary_melt_top <- melt(topic_summary_top, id.vars = "Source.title", 
+                               variable.name = "Topic", value.name = "Count")
+
+# Wrap the labels for better readability
+topic_summary_melt_top$Source.title <- str_wrap(topic_summary_melt_top$Source.title, width = 80)
+
+# Rename topics
+topic_summary_melt_top$Topic <- factor(topic_summary_melt_top$Topic,
+                                       levels = c("topic1_count", "topic2_count", "topic3_count", "topic4_count", "topic5_count", "topic6_count"),
+                                       labels = c("1", "2", "3", "4", "5", "6"))
+
+# Create a heatmap
+hm <- ggplot(topic_summary_melt_top, aes(x = Topic, y = Source.title, fill = Count)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "maroon") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 8),
+        axis.text.y = element_text(size = 8),
+        plot.title = element_text(hjust = 1)) +
+  labs(title = "Heatmap of Topic Distribution Across Top 10 Journals",
+       x = "Topics",
+       y = "Journals",
+       fill = "Count")
+hm
+```
+
+```{r}
+ggsave("hm.png", plot = hm, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+```{r}
+# Count the number of funders per research
+abstract_match$num_funders <- lengths(strsplit(as.character(abstract_match$Funding.Details), ";"))
+
+# Summarize the total number of funders per topic
+funding_summary <- abstract_match %>%
+  summarise(
+    "Psychological and Behavioral Impact of COVID-19" = sum(as.numeric(topic1) * num_funders),
+    "Educational Adaptation and Challenges During COVID-19" = sum(as.numeric(topic2) * num_funders),
+    "Governance, Politics and Development" = sum(as.numeric(topic3) * num_funders),
+    "Models, Systems, and Innovations" = sum(as.numeric(topic4) * num_funders),
+    "Immunology, Vaccine and Drug Development" = sum(as.numeric(topic5) * num_funders),
+    "COVID-19 Comorbidities" = sum(as.numeric(topic6) * num_funders)
+  )
+
+# Melt the data for easier plotting
+funding_summary_melt <- melt(funding_summary, 
+                             variable.name = "Topic", 
+                             value.name = "Total_Num_Funders")
+
+# Create a bar plot
+fund <- ggplot(funding_summary_melt, aes(x = Total_Num_Funders, y = reorder(Topic, Total_Num_Funders), fill = Topic)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Total_Num_Funders), hjust = -0.2, size = 3, color = "black") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 8),
+        axis.text.y = element_text(size = 8),
+        plot.title = element_text(hjust = 1)) +
+  labs(title = "Total Number of Funders Across Topics",
+       x = "Total Number of Funders",
+       y = "Topics") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  guides(fill=FALSE) +
+  scale_fill_manual(values = topic_colors) +
+  xlim(0,1600)
+  
+fund
+```
+
+```{r}
+funding_summary_melt
+```
+
+```{r}
+ggsave("fund.png", plot = fund, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+Mostly funded researches are about vaccine and drug development studies and other comorbidities studies.
+
+```{r}
+# Summarize the total number of citations per topic
+citation_summary <- abstract_match %>%
+  summarise(
+    "Psychological and Behavioral Impact of COVID-19" = sum(as.numeric(topic1) * Cited.by, na.rm = TRUE),
+    "Educational Adaptation and Challenges During COVID-19" = sum(as.numeric(topic2) * Cited.by, na.rm = TRUE),
+    "Governance, Politics and Development" = sum(as.numeric(topic3) * Cited.by, na.rm = TRUE),
+    "Models, Systems, and Innovations" = sum(as.numeric(topic4) * Cited.by, na.rm = TRUE),
+    "Immunology, Vaccine and Drug Development" = sum(as.numeric(topic5) * Cited.by, na.rm = TRUE),
+    "COVID-19 Comorbidities" = sum(as.numeric(topic6) * Cited.by, na.rm = TRUE)
+  )
+
+# Melt the data for easier plotting
+citation_summary_melt <- melt(citation_summary, 
+                              variable.name = "Topic", 
+                              value.name = "Total_Citations")
+
+# Create a bar plot
+citation_plot <- ggplot(citation_summary_melt, aes(x = Total_Citations, y = reorder(Topic, Total_Citations), fill = Topic)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = Total_Citations), hjust = -0.2, size = 3, color = "black") +
+  theme_minimal() +
+  labs(title = "Total Citations Across Topics",
+       x = "Total Citations",
+       y = "Topics") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  guides(fill = FALSE) +
+  scale_fill_manual(values = topic_colors) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 30)) + 
+  xlim(0,11000)
+
+citation_plot
+```
+
+```{r}
+ggsave("citation.png", plot = citation_plot, width = 7, height = 4, units = "in", dpi = 500)
+```
+
+Most cited topics are about vaccine and drug development, followed by studies on comorbidities.
+
+```{r}
+library(topicdoc)
+diagnostics <- data.frame(topic_diagnostics(lda_model, abstract_dtm))
+diagnostics
+```
+
+```{r}
+# Descriptive statistics
+summary(diagnostics)
+```
+
+```{r}
+library(GGally)
+# Correlation analysis
+correlation_matrix <- cor(diagnostics %>% select(-topic_num))
+ggcorr(correlation_matrix, label = TRUE)
+```
+
+```{r}
+metrics <- names(diagnostics)[-1]
+plots <- lapply(metrics, function(metric) {
+  ggplot(diagnostics, aes(x = !!sym(metric))) +
+    geom_histogram(binwidth = 1, fill = "blue", color = "black") +
+    theme_minimal() +
+    labs(title = paste("Distribution of", metric))
+})
+
+# Print all histograms
+print(plots)
+
+# Scatter plot matrix
+pairs(data %>% select(-topic_num))
+```
+
+```{r}
+# Update topic labels with descriptive names
+diag_df <- diagnostics %>%
+  mutate(topic_label = terms(lda_model, 5) %>%
+           apply(2, paste, collapse = ", "),
+         topic_label = paste(topic_num, topic_label, sep = " - "))
+
+# Update diagnostic names and remove topic_label.x and topic_label.y
+diag <- diag_df %>% 
+  gather(diagnostic, value, -topic_label, -topic_num) %>%
+  filter(diagnostic != "topic_label.x" & diagnostic != "topic_label.y") %>%
+  ggplot(aes(x = factor(topic_num), y = value,
+             fill = str_wrap(topic_label, 25))) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~diagnostic, scales = "free_y") +
+  labs(x = "Topic Number", y = "Diagnostic Value",
+       fill = "Topic Label", title = "All Topic Model Diagnostics") +
+  scale_fill_discrete(name = "Topic Label",
+                      labels = c("Psychological and Behavioral Impact of COVID-19",
+                                  "Educational Adaptation and Challenges During COVID-19",
+                                  "Governance, Politics and Development",
+                                  "Models, Systems, and Innovations",
+                                  "Immunology, Vaccine and Drug Development",
+                                  "COVID-19 Comorbidities")) +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        axis.title.y = element_blank()) +
+  labs(x = "Topic Number", y = "Diagnostic Value",
+       fill = "Topic Label", title = "All Topic Model Diagnostics") +
+  facet_wrap(~diagnostic, scales = "free",
+             labeller = labeller(diagnostic = c(topic_size = "Topic Size",
+                                                 mean_token_length = "Mean Token Length",
+                                                 dist_from_corpus = "Distance from Corpus",
+                                                 tf_df_dist = "TF-DF Distance",
+                                                 doc_prominence = "Document Prominence",
+                                                 topic_coherence = "Topic Coherence",
+                                                 topic_exclusivity = "Topic Exclusivity")),
+             strip.position = "left") +
+    geom_text(aes(label = sprintf("%.2f", value)), color = "black", vjust = -0.5, size = 2.5,
+            position = position_stack(vjust = 0.5))
+
+diag
+```
+
+```{r}
+ggsave("diag.png", plot = diag, width = 10, height = 5.63, dpi = 300)
+```
+
+```{r}
+library(dplyr, warn.conflicts = F)
+diag_df <- diagnostics %>%
+  mutate(topic_label = terms(lda_model, 5) %>%
+           apply(2, paste, collapse = ", "),
+         topic_label = paste(topic_num, topic_label, sep = " - "))
+
+diag_df %>% 
+  gather(diagnostic, value, -topic_label, -topic_num) %>%
+  ggplot(aes(x = topic_num, y = value,
+             fill = str_wrap(topic_label, 25))) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~diagnostic, scales = "free") +
+  labs(x = "Topic Number", y = "Diagnostic Value",
+       fill = "Topic Label", title = "All Topic Model Diagnostics")
+
+```
+
+```{r}
+# Topic coherence with actual values
+ggplot(diagnostics, aes(x = factor(topic_num), y = topic_coherence)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  geom_text(aes(label = round(topic_coherence, 2)), vjust = -0.3) +
+  theme_minimal() +
+  labs(title = "Topic Coherence", x = "Topic Number", y = "Coherence")
+```
+
+```{r}
+# Save the trained model to a file
+saveRDS(lda_model, "final_lda_model.rds")
+```
+
+```{r}
+# Save the perplexity to a file
+saveRDS(perplexity_df, "perplexity_df")
+```
+
+```{r}
+# Save tuning results
+saveRDS(lda_ldatuning_result, "lda_ldatuning_result.rds")
+```
+
+```{r}
+# Save all variables in the R environment
+save(list = ls(), file = "all_variables.RData")
+```
+
+```{r}
+# Save all output
+sink("output.txt")
+sink()
+```
+
+```{r}
+# First, select the relevant columns (ID, Year, and topic variables)
+topic_data <- abstract_match %>%
+  select(ID, Year, starts_with("topic"))
+
+# Next, gather the topic variables into key-value pairs
+topic_data_long <- topic_data %>%
+  pivot_longer(cols = starts_with("topic"), names_to = "Topic", values_to = "Presence") %>%
+  mutate(Topic = factor(Topic, levels = paste0("topic", 1:6)))  # Ensure proper ordering of topics
+
+# Now, group by Year and Topic, and calculate the count of documents with each topic for each year
+topic_distribution <- topic_data_long %>%
+  group_by(Year, Topic) %>%
+  summarise(Topic_Count = sum(Presence)) %>%
+  ungroup()
+
+# Print the resulting dataframe
+print(topic_distribution)
+```
+
+```{r}
+# Line chart
+ggplot(topic_distribution, aes(x = Year, y = Topic_Count, color = Topic, group = Topic)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Topic Counts Over Years",
+       x = "Year",
+       y = "Topic Count") +
+  theme_minimal()
+```
+
+```{r}
+# Select the relevant columns (ID, Year, and topic variables)
+topic_data <- abstract_match %>%
+  select(ID, Year, starts_with("topic"))
+
+# Gather the topic variables into key-value pairs
+topic_data_long <- topic_data %>%
+  pivot_longer(cols = starts_with("topic"), names_to = "Topic", values_to = "Presence") %>%
+  mutate(Topic = factor(Topic, levels = paste0("topic", 1:6)))  # Ensure proper ordering of topics
+
+# Group by Year and Topic, and calculate the count of documents with each topic for each year
+topic_distribution <- topic_data_long %>%
+  group_by(Year, Topic) %>%
+  summarise(Topic_Count = sum(Presence, na.rm = TRUE)) %>%
+  ungroup()
+
+new_labels = c("Psychological and Behavioral Impact of COVID-19",
+                                  "Educational Adaptation and Challenges During COVID-19",
+                                  "Governance, Politics and Development",
+                                  "Models, Systems, and Innovations",
+                                  "Immunology, Vaccine and Drug Development",
+                                  "COVID-19 Comorbidities")
+
+# Map topic numbers to actual names
+topic_distribution$Topic <- recode(topic_distribution$Topic, !!!new_labels)
+
+# Print the resulting dataframe
+print(topic_distribution)
+
+# Line chart with proper naming and colors
+topic_years <- ggplot(topic_distribution, aes(x = Year, y = Topic_Count, color = Topic, group = Topic)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Topic Counts Over Years",
+       x = "Year",
+       y = "Topic Count") +
+  theme_minimal() +
+  scale_color_manual(values = topic_colors) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+topic_years
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Select the relevant columns (ID, Year, and topic variables)
+topic_data <- abstract_match %>%
+  select(ID, Year, starts_with("topic"))
+
+# Gather the topic variables into key-value pairs
+topic_data_long <- topic_data %>%
+  pivot_longer(cols = starts_with("topic"), names_to = "Topic", values_to = "Presence") %>%
+  mutate(Topic = factor(Topic, levels = paste0("topic", 1:6)))  # Ensure proper ordering of topics
+
+# Group by Year and Topic, and calculate the count of documents with each topic for each year
+topic_distribution <- topic_data_long %>%
+  group_by(Year, Topic) %>%
+  summarise(Topic_Count = sum(Presence, na.rm = TRUE)) %>%
+  ungroup()
+
+# Define the correct mapping for the topic names
+new_labels <- c(
+  "topic1" = "Psychological and Behavioral Impact of COVID-19",
+  "topic2" = "Educational Adaptation and Challenges During COVID-19",
+  "topic3" = "Governance, Politics and Development",
+  "topic4" = "Models, Systems, and Innovations",
+  "topic5" = "Immunology, Vaccine and Drug Development",
+  "topic6" = "COVID-19 Comorbidities"
+)
+
+# Map topic numbers to actual names
+topic_distribution$Topic <- recode(topic_distribution$Topic, !!!new_labels)
+
+# Define color palette (assuming topic_colors is defined elsewhere)
+topic_colors <- c(
+  "Psychological and Behavioral Impact of COVID-19" = "#1f77b4",
+  "Educational Adaptation and Challenges During COVID-19" = "#ff7f0e",
+  "Governance, Politics and Development" = "#2ca02c",
+  "Models, Systems, and Innovations" = "#d62728",
+  "Immunology, Vaccine and Drug Development" = "#9467bd",
+  "COVID-19 Comorbidities" = "#8c564b"
+)
+
+# Print the resulting dataframe
+print(topic_distribution)
+
+# Line chart with proper naming and colors
+topic_years <- ggplot(topic_distribution, aes(x = Year, y = Topic_Count, color = Topic, group = Topic)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Topic Counts Over Years",
+       x = "Year",
+       y = "Topic Count") +
+  theme_minimal() +
+  scale_color_manual(values = topic_colors) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+# Print the plot
+print(topic_years)
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Select the relevant columns (ID, Year, and topic variables)
+topic_data <- abstract_match %>%
+  select(ID, Year, starts_with("topic"))
+
+# Filter the data to include only the years 2020, 2021, 2022, and 2023
+topic_data <- topic_data %>%
+  filter(Year %in% c(2020, 2021, 2022, 2023))
+
+# Gather the topic variables into key-value pairs
+topic_data_long <- topic_data %>%
+  pivot_longer(cols = starts_with("topic"), names_to = "Topic", values_to = "Presence") %>%
+  mutate(Topic = factor(Topic, levels = paste0("topic", 1:6)))  # Ensure proper ordering of topics
+
+# Group by Year and Topic, and calculate the count of documents with each topic for each year
+topic_distribution <- topic_data_long %>%
+  group_by(Year, Topic) %>%
+  summarise(Topic_Count = sum(Presence, na.rm = TRUE)) %>%
+  ungroup()
+
+# Define the correct mapping for the topic names
+new_labels <- c(
+  "topic1" = "Psychological and Behavioral Impact of COVID-19",
+  "topic2" = "Educational Adaptation and Challenges During COVID-19",
+  "topic3" = "Governance, Politics and Development",
+  "topic4" = "Models, Systems, and Innovations",
+  "topic5" = "Immunology, Vaccine and Drug Development",
+  "topic6" = "COVID-19 Comorbidities"
+)
+
+# Map topic numbers to actual names
+topic_distribution$Topic <- recode(topic_distribution$Topic, !!!new_labels)
+
+# Define color palette (assuming topic_colors is defined elsewhere)
+topic_colors <- c(
+  "Psychological and Behavioral Impact of COVID-19" = "#F8766D", 
+                  "Educational Adaptation and Challenges During COVID-19" = "#B79F00", 
+                  "Governance, Politics and Development" = "#00BA38", 
+                  "Models, Systems, and Innovations" = "#00BFC4", 
+                  "Immunology, Vaccine and Drug Development" = "#619CFF", 
+                  "COVID-19 Comorbidities" = "#F564E3"
+)
+
+# Print the resulting dataframe
+print(topic_distribution)
+
+# Line chart with proper naming and colors
+topic_years <- ggplot(topic_distribution, aes(x = Year, y = Topic_Count, color = Topic, group = Topic)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Topic Counts Over Years (2020-2023)",
+       x = "Year",
+       y = "Topic Count") +
+  theme_minimal() +
+  scale_color_manual(values = topic_colors) +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        plot.title = element_text(size = 16, face = "bold"),
+        axis.title = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))
+
+# Print the plot
+print(topic_years)
+```
+
+```{r}
+ggsave("topic_years.png", plot = topic_years, width = 10, height = 5.63, dpi = 300)
+```
+
+```{r}
+library(LDAvis)
+
+# Visualize the LDA model
+vis <- createJSON(lda_model2, abstract_dtm1, method = "Gibbs")
+serVis(vis)
+```
+
+```{r}
+# Pivot the dataframe to spread terms into columns
+df_pivoted <- spread(abstract_topics, term, beta)
+
+# If you want to fill missing values with 0, you can use the following line
+df_pivoted[is.na(df_pivoted)] <- 0
+
+# Optionally, reorder columns alphabetically
+phi <- df_pivoted[, c(1, order(colnames(df_pivoted)[-1]))]
+
+# Print the pivoted dataframe
+print(phi)
+```
+
+```{r}
+phi <- phi / rowSums(phi)
+```
+
+```{r}
+# Pivot the dataframe to spread topics into columns
+theta <- spread(abstract_gamma, topic, gamma)
+
+# If you want to fill missing values with 0, you can use the following line
+theta <- subset(theta, select=-document)
+
+# Print the pivoted dataframe
+print(theta)
+```
+
+```{r}
+vis <- createJSON(phi = phi, theta = theta, doc.length = rowSums(theta),
+ vocab = colnames(phi), term.frequency = colSums(phi))
+```
+
+```{r}
+serVis(vis)
+```
+
+```{r}
+saveRDS(vis, "vis.rds")
+```
+
+```{r}
+library(jsonlite)
+# Write the vis object directly to a JSON file
+write_json(vis, "lda_vis.json", pretty = TRUE)
+```
+
+```{r}
+vis <- readRDS("vis.rds")
+serVis(vis)
+```
